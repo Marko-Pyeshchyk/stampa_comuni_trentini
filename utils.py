@@ -6,7 +6,6 @@ import pandas as pd
 import geopandas as gpd
 from pandas.core.interchange.dataframe_protocol import DataFrame
 import boto3
-
 import digitalhub as dh
 import os
 
