@@ -233,7 +233,7 @@ def create_complete_map(gdf_spatial, df_tabular, df_spire):
         )
         gdf_spire_map["Info"] = spire_labels
         print(
-            f"[SUCCESS] Posizionate {len(gdf_spire_map)} spire su {len(df_spire)}."
+            f"Posizionate {len(gdf_spire_map)} spire su {len(df_spire)}."
         )
     else:
         gdf_spire_map = gpd.GeoDataFrame(
