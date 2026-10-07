@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-from pandas.core.interchange.dataframe_protocol import DataFrame
+import boto3
 import digitalhub as dh
 import os
 from pathlib import Path
@@ -22,7 +22,7 @@ PATH_SAVE.mkdir(parents=True, exist_ok=True)
 
 ## S3 utilities and getter functions from platform
 
-def get_dataframe(name: str) -> DataFrame:
+def get_dataframe(name: str) -> pd.DataFrame:
     return dh.get_dataitem(name, project=PROJECT).as_df()
 
 def get_json_s3(name: str) -> dict:
