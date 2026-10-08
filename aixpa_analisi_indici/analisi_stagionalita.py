@@ -6,11 +6,20 @@ import pandas as pd
 from pathlib import Path 
 import geopandas as geopd
 import plotly.graph_objs as go 
+import plotly.figure_factory as ff
+import matplotlib.pyplot as plt 
 import numpy as np 
+
+from statsmodels.tsa.seasonal import MSTL
+from statsmodels.tsa.stattools import acf
+from scipy.cluster.hierarchy import linkage, fcluster
+from scipy.spatial.distance import squareform
+
+from help_plots import plot_overlapped, plot_stats
+
 import sys
 sys.path.insert(0, str(Path("/home/aricci/stampa_comuni_trentini").resolve()))
 from utils import get_s3, get_mapping, get_dataframe
-
 
 # %% [markdown]
 ## Download of the data and processing 
@@ -67,113 +76,130 @@ vodafone_attendences_merged_comuni.comune.isna().any()
 # %% [markdown]
 #### Here, we define the helper functions to use in plotting 
 
-def plot_overlapped(df, col_data='date', col_comune='comune', col_valore='value'):
-    fig = go.Figure()
-
-    # Raggruppiamo per comune per aggiungere una traccia (linea) ciascuno
-    for comune, group in df.groupby(col_comune):
-        fig.add_trace(
-            go.Scatter(
-                x=group[col_data],
-                y=group[col_valore],
-                mode='lines',
-                name=comune,
-                text=group[col_comune],
-                hovertemplate='<b>%{text}</b><br>Data: %{x|%Y-%m-%d}<br>Presenze: %{y:,}<extra></extra>'
-            )
-        )
-
-    fig.update_layout(
-        title="Presenze Turistiche per Comune",
-        xaxis_title="Data",
-        yaxis_title="Presenze (Turisti)",
-        hovermode="closest",
-        template="plotly_white",
-        legend_title="Comuni"
-    )
-
-    return fig
-
-def plot_stats(df, col_data='date', col_comune='comune', col_valore='value'):
-    """Overlaps and stats"""
-    df = df.copy()
-    df[col_data] = pd.to_datetime(df[col_data])
-    
-    stats_df = df.groupby(col_data)[col_valore].agg(['mean', 'median', 'max']).reset_index().sort_values(col_data)
-    
-    fig = go.Figure()
-    
-    comuni = df[col_comune].unique()
-    for i, comune in enumerate(comuni):
-        df_comune = df[df[col_comune] == comune].sort_values(col_data)
-
-        # Mostriamo la voce in legenda SOLO al primo giro del ciclo
-        mostra_nella_legenda = True if i == 0 else False
-
-        fig.add_trace(go.Scatter(
-            x=df_comune[col_data],
-            y=df_comune[col_valore],
-            mode='lines',
-            name='Singoli Comuni',              # Nome per la legenda
-            legendgroup='group_comuni',         # Raggruppa tutte queste linee
-            showlegend=mostra_nella_legenda,
-            line=dict(color='rgba(31, 119, 180, 0.15)', width=1), # Sottili e semitrasparenti (azzurro)
-            hovertemplate=f"<b>{comune}</b><br>Presenze: %{{y}}<extra></extra>" 
-        ))
-    # MEDIA 
-    fig.add_trace(go.Scatter(
-        x=stats_df[col_data],
-        y=stats_df['mean'],
-        mode='lines',
-        name='Media (per Comune)',
-        line=dict(color='rgba(214, 39, 40, 1.0)', width=3), # Rosso fuoco, spessa
-        hovertemplate="<b>Media</b><br>Presenze: %{y:.0f}<extra></extra>"
-    ))
-
-    # 4. MEDIANA
-    fig.add_trace(go.Scatter(
-        x=stats_df[col_data],
-        y=stats_df['median'],
-        mode='lines',
-        name='Mediana (per Comune)',
-        line=dict(color='yellow', width=2), 
-        hovertemplate="<b>Mediana</b><br>Presenze: %{y:.0f}<extra></extra>"
-    ))
-    
-    fig.update_layout(
-        title="Andamento Presenze Turistiche: Distribuzione Comuni vs Statistiche",
-        xaxis_title="Data",
-        yaxis_title="Presenze Turistiche",
-        hovermode='closest', # Usiamo 'closest' invece di 'x unified' per non intasare lo schermo con 160+ tooltip
-        template='plotly_white',
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        )
-    )
-    
-    fig.show()
-
 
 # %%
 ## PLOT: tourist attendences 
 fig = plot_overlapped(tourists_attendences)
 fig.show()
-# %%
-## PLOT: tourist attendences 
-plot_stats(tourists_attendences)
+## PLOT: tourist attendences
+fig = plot_stats(tourists_attendences)
+fig.show()
 
-# %% [markdown]
-# # Variational analysis 
-# Here we calculate the "derivative" to see the variation 
-# 
-# **Note:** Dropping `NaN` to avoid errors.
+# %% 
+## Add rolling window
+t = tourists_attendences.copy()
+s_clean = (
+    t.pivot(index="date", columns="comune", values="value")
+    .reindex(pd.date_range("2022-01-01", "2025-12-31", freq="D")) # 32 comuni tt.isna().sum()[tt.isna().sum() > 0].sort_values()
+    .fillna(0)
+)
+# Comune di esempio
+comune_test = "PINZOLO"
+ts_comune = s_clean[comune_test]
 
-tourists_attendences['value_diff'] = tourists_attendences['value'].diff()
-plot_stats(tourists_attendences.dropna(), col_valore = "value_diff")
+ts_rolling_7 = ts_comune.rolling(window=7, center=True).mean()
+ts_rolling_14 = ts_comune.rolling(window=14, center=True).mean()
+ts_rolling_20 = ts_comune.rolling(window=20, center=True).mean()
+
+fig_smooth = go.Figure()
+
+fig_smooth.add_trace(go.Scatter(
+    x=ts_comune.index, y=ts_comune,
+    mode='lines', name='Dati Grezzi (Giornalieri)',
+    line=dict(color="#676867", width=1)
+))
+
+fig_smooth.add_trace(go.Scatter(
+    x=ts_rolling_7.index, 
+    y=ts_rolling_7,
+    mode='lines',
+    name='Rolling 7 gg',
+    line=dict(color="#278324", width=2) 
+))
+
+fig_smooth.add_trace(go.Scatter(
+    x=ts_rolling_20.index, 
+    y=ts_rolling_20,
+    mode='lines',
+    name='Rolling 20 gg',
+    line=dict(color="#B549E7", width=2) 
+))
+
+fig_smooth.update_layout(
+    title=f"Smoothing - Comune di {comune_test}",
+    xaxis_title="Data",
+    yaxis_title="Presenze Turistiche",
+    template="plotly_white",
+    hovermode="x unified"
+)
+fig_smooth.show()
+
+
+# %% 
+
+# Scomposizione MSTL 
+# Impostiamo la stagionalità settimanale (7 giorni) e annuale (365 giorni)
+# Se manca al massimo una settimana di dati, ricostruisco i valori sulla base dei giorni circostanti.
+
+s_mstl = (
+    t.pivot(index="date", columns="comune", values="value")
+    .reindex(pd.date_range("2022-01-01", "2025-12-31", freq="D"))
+)
+s_mstl = s_mstl.interpolate(method="time", limit=7)
+s_mstl.isna().sum().sort_values(ascending=False).head(20)
+
+ts_comune = s_mstl[comune_test].dropna()
+
+mstl = MSTL(
+    ts_comune,
+    periods=(7, 365),
+    iterate=3
+)
+
+res = mstl.fit()
+
+# %% 
+mstl = MSTL(ts_comune, periods=(7, 30), iterate=3)
+res = mstl.fit()
+
+ts_trend_season = res.trend + res.seasonal['seasonal_30']
+
+fig_smooth.add_trace(go.Scatter(
+    x=ts_trend_season.index, y=ts_trend_season,
+    mode='lines', name='Trend + Stagionalità Annuale (MSTL)',
+    line=dict(color='red', width=2)
+))
+
+resid = res.resid.dropna()
+
+fig, ax = plt.subplots(figsize=(15, 4))
+
+ax.plot(resid)
+
+ax.set_title(f"Residui MSTL - {comune_test}")
+ax.set_xlabel("Data")
+ax.set_ylabel("Residuo")
+
+plt.tight_layout()
+plt.show()
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+
+fig, ax = plt.subplots(figsize=(12, 4))
+plot_acf(resid, lags=100, ax=ax)
+
+ax.set_title(f"ACF dei residui MSTL - {comune_test}")
+
+plt.tight_layout()
+plt.show()
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+
+fig, ax = plt.subplots(figsize=(12, 4))
+plot_acf(resid, lags=100, ax=ax)
+
+ax.set_title(f"ACF dei residui MSTL - {comune_test}")
+
+plt.tight_layout()
+plt.show()
 
 # %% [markdown]
 # APPENDIX
