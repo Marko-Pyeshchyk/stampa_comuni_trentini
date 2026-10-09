@@ -14,12 +14,12 @@ from statsmodels.tsa.seasonal import MSTL
 from statsmodels.tsa.stattools import acf
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
-
-from help_plots import plot_overlapped, plot_stats
+from scipy.signal import find_peaks
 
 import sys
 sys.path.insert(0, str(Path("/home/aricci/stampa_comuni_trentini").resolve()))
 from utils import get_s3, get_mapping, get_dataframe
+from aixpa_analisi_indici.help_plots import plot_overlapped, plot_stats
 
 # %% [markdown]
 ## Download of the data and processing 
@@ -27,7 +27,7 @@ from utils import get_s3, get_mapping, get_dataframe
 
 # In[ ]:
 
-vodafone_attendences = get_dataframe("vodafone_attendences")
+vodafone_attendences = pd.read_csv(get_s3("vodafone_attendences.csv"))
 vodafone_attendences_new = pd.read_csv(get_s3("vodafone_attendences_new.csv"))
 
 geojson_comuni_json_data = geopd.read_file(get_s3("TRENTINO-comuni_Vodafone_2023.geojson"))
@@ -118,6 +118,14 @@ fig_smooth.add_trace(go.Scatter(
 ))
 
 fig_smooth.add_trace(go.Scatter(
+    x=ts_rolling_14.index, 
+    y=ts_rolling_14,
+    mode='lines',
+    name='Rolling 14 gg',
+    line=dict(color="#51AFC5", width=2) 
+))
+
+fig_smooth.add_trace(go.Scatter(
     x=ts_rolling_20.index, 
     y=ts_rolling_20,
     mode='lines',
@@ -134,102 +142,29 @@ fig_smooth.update_layout(
 )
 fig_smooth.show()
 
-
 # %% 
+# PEAK ANALYSIS
 
-# Scomposizione MSTL 
-# Impostiamo la stagionalità settimanale (7 giorni) e annuale (365 giorni)
-# Se manca al massimo una settimana di dati, ricostruisco i valori sulla base dei giorni circostanti.
+y_smoothed = ts_rolling_14.dropna() # Rimuoviamo i NaN generati dal rolling
 
-s_mstl = (
-    t.pivot(index="date", columns="comune", values="value")
-    .reindex(pd.date_range("2022-01-01", "2025-12-31", freq="D"))
-)
-s_mstl = s_mstl.interpolate(method="time", limit=7)
-s_mstl.isna().sum().sort_values(ascending=False).head(20)
+# find_peaks trova gli indici (la posizione) dei picchi
+# 'distance=14' impone che ci siano almeno 14 giorni tra un picco e l'altro
+# 'prominence=500' impone che il picco si innalzi di almeno 500 presenze rispetto alle valli circostanti
+peaks_indices, _ = find_peaks(y_smoothed, distance=14, prominence=500)
 
-ts_comune = s_mstl[comune_test].dropna()
+# Otteniamo le date e i valori reali dei picchi
+date_picchi = y_smoothed.index[peaks_indices]
+valori_picchi = y_smoothed.iloc[peaks_indices]
 
-mstl = MSTL(
-    ts_comune,
-    periods=(7, 365),
-    iterate=3
-)
-
-res = mstl.fit()
-
-# %% 
-mstl = MSTL(ts_comune, periods=(7, 30), iterate=3)
-res = mstl.fit()
-
-ts_trend_season = res.trend + res.seasonal['seasonal_30']
-
+# Aggiungiamo i picchi al tuo grafico Plotly esistente (fig_smooth)
 fig_smooth.add_trace(go.Scatter(
-    x=ts_trend_season.index, y=ts_trend_season,
-    mode='lines', name='Trend + Stagionalità Annuale (MSTL)',
-    line=dict(color='red', width=2)
+    x=date_picchi, 
+    y=valori_picchi,
+    mode='markers',
+    name='Picchi Principali',
+    marker=dict(color='red', size=5, symbol='circle', line=dict(color='black', width=.5)),
+    hovertemplate="<b>Picco</b><br>Data: %{x|%Y-%m-%d}<br>Presenze: %{y:.0f}<extra></extra>"
 ))
 
-resid = res.resid.dropna()
+fig_smooth.show()
 
-fig, ax = plt.subplots(figsize=(15, 4))
-
-ax.plot(resid)
-
-ax.set_title(f"Residui MSTL - {comune_test}")
-ax.set_xlabel("Data")
-ax.set_ylabel("Residuo")
-
-plt.tight_layout()
-plt.show()
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-
-fig, ax = plt.subplots(figsize=(12, 4))
-plot_acf(resid, lags=100, ax=ax)
-
-ax.set_title(f"ACF dei residui MSTL - {comune_test}")
-
-plt.tight_layout()
-plt.show()
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-
-fig, ax = plt.subplots(figsize=(12, 4))
-plot_acf(resid, lags=100, ax=ax)
-
-ax.set_title(f"ACF dei residui MSTL - {comune_test}")
-
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# APPENDIX
-
-# CONTROLLI EXTRA 
-s = tourists_attendences["value"].unstack("comune")
-s.index = pd.to_datetime(s.index)
-ids = tourists_attendences["ID_COMUNE"].groupby(level="comune").first()
-
-# Integrità
-full_range = pd.date_range("2022-01-01", "2025-12-31", freq="D")
-print("comuni:", s.shape[1], "| giorni:", s.shape[0], "| attesi:", len(full_range))
-print("duplicati indice:", tourists_attendences.index.duplicated().sum())
-print("giorni mancanti:", full_range.difference(s.index).size)
-
-# 3) NaN, zeri, negativi per comune
-qc = pd.DataFrame({
-    "n_nan":   s.isna().sum(),
-    "pct_zero": (s.eq(0)).mean().round(3),
-    "n_neg":   (s < 0).sum(),
-    "tot":     s.sum(),
-    "max":     s.max(),
-    "max_over_median": (s.max() / s.median().replace(0, np.nan)).round(1),
-})
-print(qc.sort_values("pct_zero", ascending=False).head(20))
-print(qc.query("n_nan > 0 or n_neg > 0"))
-
-# 4) totale per anno e comune (cerca anni vuoti o salti strani)
-yearly = s.groupby(s.index.year).sum().T
-yearly["ratio_25_22"] = yearly[2025] / yearly[2022]
-print(yearly.sort_values("ratio_25_22").head(10))
-print(yearly.sort_values("ratio_25_22").tail(10))
-# %%

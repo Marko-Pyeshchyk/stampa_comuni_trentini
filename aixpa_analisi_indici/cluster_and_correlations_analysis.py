@@ -7,19 +7,20 @@ from pathlib import Path
 import geopandas as geopd
 import plotly.graph_objs as go 
 import plotly.figure_factory as ff
+import plotly.express as px 
 import matplotlib.pyplot as plt 
 import numpy as np 
 import pandas as pd 
 
-from statsmodels.tsa.seasonal import MSTL
-from statsmodels.tsa.stattools import acf
 from scipy.cluster.hierarchy import linkage, fcluster
 from scipy.spatial.distance import squareform
 from sklearn.metrics import silhouette_score
+from scipy.signal import find_peaks
 
 import sys
 sys.path.insert(0, str(Path("/home/aricci/stampa_comuni_trentini").resolve()))
-from utils import get_s3, get_mapping, get_dataframe
+from utils import get_s3, get_mapping
+from aixpa_analisi_indici.help_plots import plot_overlapped, plot_stats, find_peaks_dynamic
 
 # %% [markdown]
 ## Download of the data and processing 
@@ -27,7 +28,7 @@ from utils import get_s3, get_mapping, get_dataframe
 
 # In[ ]:
 
-vodafone_attendences = get_dataframe("vodafone_attendences")
+vodafone_attendences = pd.read_csv(get_s3("vodafone_attendences.csv"))
 vodafone_attendences_new = pd.read_csv(get_s3("vodafone_attendences_new.csv"))
 
 geojson_comuni_json_data = geopd.read_file(get_s3("TRENTINO-comuni_Vodafone_2023.geojson"))
@@ -147,24 +148,26 @@ corr_matrix = s_clean.corr()
 # - i 3 metodi
 # - le due matrici di correlaizoni
 
+dist_matrix = 1 - corr_matrix
+condensed_dist = squareform(dist_matrix.values, checks=False)
 
 for method in ["average", "complete", "single", "ward"]:
-    dist_matrix = 1 - corr
-    condensed_dist = squareform(dist_matrix, checks=False)
-    Z_test = linkage(dist_matrix, method=method)
+    Z_test = linkage(condensed_dist, method=method)
     
     for k in range(2, 8):
-        labels = fcluster(Z_test,t=k,criterion="maxclust")
-        score = silhouette_score(dist_matrix,labels,metric="precomputed")
+        labels = fcluster(Z_test, t=k, criterion="maxclust")
+        # Per silhouette_score possiamo passare la matrice quadrata dist_matrix
+        score = silhouette_score(dist_matrix, labels, metric="precomputed")
         print(f"{method:8s} | k={k} | silhouette={score:.3f}")
 
 # %%
-CLUSTERS = 4
+CLUSTERS = 3
 METHOD = "ward"
 CORRMX = corr 
 
 # Clustering con metodo Ward
-dist_matrix = 1 - corr
+dist_matrix = 1 - corr_matrix
+condensed_dist = squareform(dist_matrix.values, checks=False)
 Z = linkage(dist_matrix, method=METHOD)
 
 dendogram = ff.create_dendrogram(
@@ -195,3 +198,81 @@ df_clusters = pd.DataFrame({
 
 print(f"--- Distribuzione Comuni nei {CLUSTERS} Cluster ---")
 print(df_clusters['cluster'].value_counts())
+
+# %%
+rolling = 14 
+for cc in df_clusters['cluster'].unique():
+    clust_subdf = df_clusters[df_clusters['cluster'] == cc]
+    ## SUBDF OF ATTENDENCES OF COMUNI IN CLUSTER 
+    tourists_attendences_clust_subdf = tourists_attendences[tourists_attendences['comune'].isin(clust_subdf['comune'].unique())]
+
+    ## ROLLING WINDOW 
+    s_clean = (
+        tourists_attendences_clust_subdf.pivot(index="date", columns="comune", values="value")
+        .reindex(pd.date_range("2022-01-01", "2025-12-31", freq="D")) # 32 comuni tt.isna().sum()[tt.isna().sum() > 0].sort_values()
+        .fillna(0)
+    )
+    ts_rolling_14 = s_clean.rolling(window=rolling, center=True).mean()  
+    ts_normalized = (ts_rolling_14 - ts_rolling_14.min()) / (ts_rolling_14.max() - ts_rolling_14.min())
+
+    ## NORMALIZATION
+    ts_normalized_long = (
+        ts_normalized.reset_index()
+        .melt(id_vars="index", var_name="comune", value_name="value")
+        .rename(columns={"index": "date"}) 
+        .dropna() 
+    )
+
+    ## FIND PEAKS 
+    fig = plot_stats(ts_normalized_long)
+
+    all_peak_dates = []
+    for comune in ts_normalized.columns:
+        ts_comune = ts_normalized[comune].dropna()
+        peaks_idx, _ = find_peaks(ts_comune, distance=14, prominence=0.15)
+        all_peak_dates.extend(ts_comune.index[peaks_idx])
+
+        
+        date_picchi = ts_comune.index[peaks_idx]
+        valori_picchi = ts_comune.iloc[peaks_idx]
+
+        fig.add_trace(go.Scatter(
+            x=date_picchi,
+            y=valori_picchi,
+            mode='markers',
+            name=f'Picchi {comune}',
+            marker=dict(size=5, symbol='circle', color = "blue"),
+            showlegend=False,  
+            hovertemplate=f"<b>Picco ({comune})</b><br>Data: %{{x|%Y-%m-%d}}<br>Valore Norm: %{{y:.2f}}<extra></extra>"
+        ))
+
+    df_peaks = pd.DataFrame({'date': all_peak_dates})
+
+    fig.update_layout(
+        title=f"Cluster {cc} - Trend Normalizzato e Picchi Principali (Rolling {rolling} gg)",
+        yaxis_title="Presenze Normalizzate (0=Min, 1=Max)"
+    )
+    for d in date_picchi:
+        fig.add_vline(
+            x=d, 
+            line_dash="dot", 
+            line_color="blue", 
+            line_width=1,
+            opacity=0.6
+        )
+    fig.show()
+    
+    fig_hist = px.histogram(
+        df_peaks, 
+        x='date', 
+        nbins=120,  
+        title=f"Cluster {cc} - Concentrazione delle Date di Picco tra i Comuni",
+        labels={'date': 'Data', 'count': 'N° Comuni in Picco'},
+        template='plotly_white'
+    )
+
+    fig_hist.update_traces(marker_color='#1f77b4')
+    fig_hist.update_layout(bargap=0.1)
+    fig_hist.show()
+
+# %%
