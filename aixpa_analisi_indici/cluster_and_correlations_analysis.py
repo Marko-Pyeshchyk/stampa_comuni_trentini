@@ -7,7 +7,7 @@ from pathlib import Path
 import geopandas as geopd
 import plotly.graph_objs as go 
 import plotly.figure_factory as ff
-import plotly.express as px 
+import plotly.express as px  
 import matplotlib.pyplot as plt 
 import numpy as np 
 import pandas as pd 
@@ -20,7 +20,7 @@ from scipy.signal import find_peaks
 import sys
 sys.path.insert(0, str(Path("/home/aricci/stampa_comuni_trentini").resolve()))
 from utils import get_s3, get_mapping
-from aixpa_analisi_indici.help_plots import plot_overlapped, plot_stats, find_peaks_dynamic
+from aixpa_analisi_indici.help_plots import plot_stats
 
 # %% [markdown]
 ## Download of the data and processing 
@@ -201,6 +201,8 @@ print(df_clusters['cluster'].value_counts())
 
 # %%
 rolling = 14 
+all_counts = [] 
+
 for cc in df_clusters['cluster'].unique():
     clust_subdf = df_clusters[df_clusters['cluster'] == cc]
     ## SUBDF OF ATTENDENCES OF COMUNI IN CLUSTER 
@@ -209,7 +211,7 @@ for cc in df_clusters['cluster'].unique():
     ## ROLLING WINDOW 
     s_clean = (
         tourists_attendences_clust_subdf.pivot(index="date", columns="comune", values="value")
-        .reindex(pd.date_range("2022-01-01", "2025-12-31", freq="D")) # 32 comuni tt.isna().sum()[tt.isna().sum() > 0].sort_values()
+        .reindex(pd.date_range("2022-01-01", "2025-12-31", freq="D"))
         .fillna(0)
     )
     ts_rolling_14 = s_clean.rolling(window=rolling, center=True).mean()  
@@ -227,24 +229,38 @@ for cc in df_clusters['cluster'].unique():
     fig = plot_stats(ts_normalized_long)
 
     all_peak_dates = []
+    comune_peak_counts = []   # <-- NUOVO: conteggi per questo cluster
+
     for comune in ts_normalized.columns:
         ts_comune = ts_normalized[comune].dropna()
         peaks_idx, _ = find_peaks(ts_comune, distance=14, prominence=0.15)
         all_peak_dates.extend(ts_comune.index[peaks_idx])
 
-        
         date_picchi = ts_comune.index[peaks_idx]
         valori_picchi = ts_comune.iloc[peaks_idx]
+
+        # NUOVO: salvo il numero di picchi di questo comune
+        comune_peak_counts.append({
+            'comune': comune,
+            'cluster': cc,
+            'n_picchi': len(peaks_idx),
+        })
 
         fig.add_trace(go.Scatter(
             x=date_picchi,
             y=valori_picchi,
             mode='markers',
             name=f'Picchi {comune}',
-            marker=dict(size=5, symbol='circle', color = "blue"),
+            marker=dict(size=5, symbol='circle', color="blue"),
             showlegend=False,  
             hovertemplate=f"<b>Picco ({comune})</b><br>Data: %{{x|%Y-%m-%d}}<br>Valore Norm: %{{y:.2f}}<extra></extra>"
         ))
+
+    # NUOVO: fuori dal ciclo sui comuni, una volta per cluster
+    df_n_picchi = pd.DataFrame(comune_peak_counts).sort_values('n_picchi', ascending=False)
+    all_counts.append(df_n_picchi)
+    print(f"\n--- Cluster {cc}: picchi per comune ---")
+    print(df_n_picchi.to_string(index=False))
 
     df_peaks = pd.DataFrame({'date': all_peak_dates})
 
@@ -252,16 +268,16 @@ for cc in df_clusters['cluster'].unique():
         title=f"Cluster {cc} - Trend Normalizzato e Picchi Principali (Rolling {rolling} gg)",
         yaxis_title="Presenze Normalizzate (0=Min, 1=Max)"
     )
-    for d in date_picchi:
+    for d in df_peaks['date'].unique():
         fig.add_vline(
             x=d, 
             line_dash="dot", 
             line_color="blue", 
             line_width=1,
-            opacity=0.6
+            opacity=0.3 
         )
     fig.show()
-    
+
     fig_hist = px.histogram(
         df_peaks, 
         x='date', 
@@ -270,9 +286,11 @@ for cc in df_clusters['cluster'].unique():
         labels={'date': 'Data', 'count': 'N° Comuni in Picco'},
         template='plotly_white'
     )
-
     fig_hist.update_traces(marker_color='#1f77b4')
     fig_hist.update_layout(bargap=0.1)
     fig_hist.show()
+# %%
+
+fig.show()
 
 # %%
