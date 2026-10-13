@@ -6,14 +6,6 @@ import pandas as pd
 from pathlib import Path 
 import geopandas as geopd
 import plotly.graph_objs as go 
-import plotly.figure_factory as ff
-import matplotlib.pyplot as plt 
-import numpy as np 
-
-from statsmodels.tsa.seasonal import MSTL
-from statsmodels.tsa.stattools import acf
-from scipy.cluster.hierarchy import linkage, fcluster
-from scipy.spatial.distance import squareform
 from scipy.signal import find_peaks
 
 import sys
