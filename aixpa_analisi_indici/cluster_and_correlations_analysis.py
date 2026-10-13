@@ -18,7 +18,12 @@ from sklearn.metrics import silhouette_score
 from scipy.signal import find_peaks
 
 import sys
-sys.path.insert(0, str(Path("/home/aricci/stampa_comuni_trentini").resolve()))
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from utils import get_s3, get_mapping
 from aixpa_analisi_indici.help_plots import plot_overlapped, plot_stats, find_peaks_dynamic
 

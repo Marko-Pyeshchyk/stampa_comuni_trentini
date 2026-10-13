@@ -17,7 +17,11 @@ from scipy.spatial.distance import squareform
 from scipy.signal import find_peaks
 
 import sys
-sys.path.insert(0, str(Path("/home/aricci/stampa_comuni_trentini").resolve()))
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from utils import get_s3, get_mapping, get_dataframe
 from aixpa_analisi_indici.help_plots import plot_overlapped, plot_stats
 
