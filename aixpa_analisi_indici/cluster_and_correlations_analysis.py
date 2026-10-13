@@ -200,7 +200,9 @@ print(f"--- Distribuzione Comuni nei {CLUSTERS} Cluster ---")
 print(df_clusters['cluster'].value_counts())
 
 # %%
-rolling = 14 
+ROLLING = 14 
+PROMINCENCE = 0.25
+SEASONALITY = 60
 all_counts = [] 
 
 for cc in df_clusters['cluster'].unique():
@@ -214,10 +216,15 @@ for cc in df_clusters['cluster'].unique():
         .reindex(pd.date_range("2022-01-01", "2025-12-31", freq="D"))
         .fillna(0)
     )
-    ts_rolling_14 = s_clean.rolling(window=rolling, center=True).mean()  
-    ts_normalized = (ts_rolling_14 - ts_rolling_14.min()) / (ts_rolling_14.max() - ts_rolling_14.min())
+    ts_rolling_14 = s_clean.rolling(window=ROLLING, center=True).mean()  
+    
+    min_vals = ts_rolling_14.min()
+    max_vals = ts_rolling_14.max()
+    denom = max_vals - min_vals
+    ts_normalized = (ts_rolling_14 - min_vals) / denom.replace(0, np.nan)
+    ts_normalized = ts_normalized.fillna(0)
 
-    ## NORMALIZATION
+    ## NORMALIZATION (LONG FORMAT)
     ts_normalized_long = (
         ts_normalized.reset_index()
         .melt(id_vars="index", var_name="comune", value_name="value")
@@ -229,17 +236,17 @@ for cc in df_clusters['cluster'].unique():
     fig = plot_stats(ts_normalized_long)
 
     all_peak_dates = []
-    comune_peak_counts = []   # <-- NUOVO: conteggi per questo cluster
+    comune_peak_counts = []   # conteggi per questo cluster
 
     for comune in ts_normalized.columns:
         ts_comune = ts_normalized[comune].dropna()
-        peaks_idx, _ = find_peaks(ts_comune, distance=14, prominence=0.15)
+        peaks_idx, _ = find_peaks(ts_comune, distance=60, prominence=PROMINCENCE)
         all_peak_dates.extend(ts_comune.index[peaks_idx])
 
         date_picchi = ts_comune.index[peaks_idx]
         valori_picchi = ts_comune.iloc[peaks_idx]
 
-        # NUOVO: salvo il numero di picchi di questo comune
+        # Salvo il numero di picchi di questo comune
         comune_peak_counts.append({
             'comune': comune,
             'cluster': cc,
@@ -256,41 +263,79 @@ for cc in df_clusters['cluster'].unique():
             hovertemplate=f"<b>Picco ({comune})</b><br>Data: %{{x|%Y-%m-%d}}<br>Valore Norm: %{{y:.2f}}<extra></extra>"
         ))
 
-    # NUOVO: fuori dal ciclo sui comuni, una volta per cluster
-    df_n_picchi = pd.DataFrame(comune_peak_counts).sort_values('n_picchi', ascending=False)
+    # Raccolta metriche per cluster
+    df_n_picchi = pd.DataFrame(comune_peak_counts).sort_values(
+        'n_picchi', ascending=False
+    )
     all_counts.append(df_n_picchi)
     print(f"\n--- Cluster {cc}: picchi per comune ---")
     print(df_n_picchi.to_string(index=False))
 
-    df_peaks = pd.DataFrame({'date': all_peak_dates})
+    df_peaks = pd.DataFrame({'date': all_peak_dates}) if all_peak_dates else pd.DataFrame(columns=['date'])
 
     fig.update_layout(
-        title=f"Cluster {cc} - Trend Normalizzato e Picchi Principali (Rolling {rolling} gg)",
+        title=f"Cluster {cc} - Trend Normalizzato e Picchi Principali (Rolling {ROLLING} gg)",
         yaxis_title="Presenze Normalizzate (0=Min, 1=Max)"
     )
-    for d in df_peaks['date'].unique():
-        fig.add_vline(
-            x=d, 
-            line_dash="dot", 
-            line_color="blue", 
-            line_width=1,
-            opacity=0.3 
-        )
+    
+    if not df_peaks.empty:
+        for d in df_peaks['date'].unique():
+            fig.add_vline(
+                x=d, 
+                line_dash="dot", 
+                line_color="blue", 
+                line_width=1,
+                opacity=0.3 
+            )
     fig.show()
 
-    fig_hist = px.histogram(
-        df_peaks, 
-        x='date', 
-        nbins=120,  
-        title=f"Cluster {cc} - Concentrazione delle Date di Picco tra i Comuni",
-        labels={'date': 'Data', 'count': 'N° Comuni in Picco'},
-        template='plotly_white'
-    )
-    fig_hist.update_traces(marker_color='#1f77b4')
-    fig_hist.update_layout(bargap=0.1)
-    fig_hist.show()
+    if not df_peaks.empty:
+        fig_hist = px.histogram(
+            df_peaks, 
+            x='date', 
+            nbins=120,  
+            title=f"Cluster {cc} - Concentrazione delle Date di Picco tra i Comuni",
+            labels={'date': 'Data', 'count': 'N° Comuni in Picco'},
+            template='plotly_white'
+        )
+        fig_hist.update_traces(marker_color='#1f77b4')
+        fig_hist.update_layout(bargap=0.1)
+        fig_hist.show()
 # %%
+COMUNE = "MALE'"
+date_complete = pd.date_range("2022-01-01", "2025-12-31", freq="D")
 
+ts_roll = (
+    tourists_attendences.loc[tourists_attendences["comune"] == COMUNE]
+    .set_index("date")["value"]
+    .reindex(date_complete)
+    .fillna(0)
+    .rolling(window=ROLLING, center=True)
+    .mean()
+)
+
+ts_norm = ((ts_roll - ts_roll.min()) / (ts_roll.max() - ts_roll.min())).dropna()
+peaks_idx, _ = find_peaks(ts_norm,distance=60, prominence=0.25)
+date_picchi = ts_norm.index[peaks_idx]
+valori_picchi_reali = ts_roll.loc[date_picchi]
+print(f"{COMUNE}: {len(date_picchi)} picchi")
+
+df_real = pd.DataFrame({"date": ts_roll.index, "value": ts_roll.values}).assign(comune=COMUNE)
+fig = plot_stats(df_real.dropna(), stats=[])
+fig.add_trace(go.Scatter(
+    x=date_picchi, y=valori_picchi_reali, mode="markers",
+    name=f"Picchi {COMUNE} (Reali)",
+    marker=dict(size=8, color="red", line=dict(color="white", width=1)),
+))
+fig.update_layout(title=f"Trend Reale e Picchi - {COMUNE}", yaxis_title="Presenze Turistiche Assolute")
 fig.show()
 
+# %%
+long = ts_normalized_long.merge(df_clusters, on="comune")
+long["week"] = long["date"].dt.isocalendar().week
+long["year"] = long["date"].dt.year
+prof = (long.groupby(["cluster", "year", "week"])["value"].mean()
+            .reset_index())
+fig = px.line(prof, x="week", y="value", color="year", facet_row="cluster")
+fig.show()
 # %%

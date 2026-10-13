@@ -42,9 +42,17 @@ def plot_stats(
     """
     df = df.copy()
     df[col_data] = pd.to_datetime(df[col_data])
-    
-    stats_df = df.groupby(col_data)[col_valore].agg(stats).reset_index().sort_values(col_data)
-    
+        
+    if stats:
+        stats_df = (
+            df.groupby(col_data)[col_valore]
+            .agg(stats)
+            .reset_index()
+            .sort_values(col_data)
+        )
+    else:
+        stats_df = pd.DataFrame(columns=[col_data])    
+        
     fig = go.Figure()
     
     comuni = df[col_comune].unique()
