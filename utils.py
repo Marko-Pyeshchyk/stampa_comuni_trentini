@@ -11,6 +11,7 @@ import boto3
 import configparser
 import json
 import logging
+from dhcli_env import DHCLI_ENVIRONMENT
 
 
 PROJECT = os.environ.get("PROJECT_NAME", "overtourism")
@@ -74,7 +75,7 @@ def log_geojson(gdf: gpd.GeoDataFrame, name: str) -> None:
     project = dh.get_or_create_project(PROJECT)
     project.log_artifact(name + ".geojson", "artifact", source=source)
 
-def init_s3_dhcli(env="most-platform"):
+def init_s3_dhcli(env=DHCLI_ENVIRONMENT):
     """
     Initialize S3 connection for overtourism analysis.
         Parameters:
@@ -110,7 +111,7 @@ s3, bucket = None, None
 def init_s3(force=False):
     global s3, bucket
     if s3 is None or bucket is None or force:
-        s3, bucket = init_s3_dhcli("most-platform")
+        s3, bucket = init_s3_dhcli(DHCLI_ENVIRONMENT)
     return s3, bucket
 
 def get_s3(name: str):

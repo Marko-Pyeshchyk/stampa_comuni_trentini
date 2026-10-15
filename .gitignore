@@ -9,3 +9,9 @@ wheels/
 # Virtual environments
 .venv
 ComuniTrentini.geojson
+
+# dhcli
+dhcli_env.py
+
+# data
+/raw_data
