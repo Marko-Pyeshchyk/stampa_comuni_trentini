@@ -17,6 +17,7 @@ from scipy.spatial.distance import squareform
 from sklearn.metrics import silhouette_score
 from scipy.signal import find_peaks
 
+import json
 import sys
 from pathlib import Path
 
@@ -24,7 +25,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from utils import get_s3, get_mapping
+from download_data import (
+    VODAFONE_ATTENDENCIES_PATH,
+    VODAFONE_ATTENDENCIES_NEW_PATH,
+    GEOJSON_COMUNI_VODAFONE_PATH,
+    MAPPING_COMUNI_VODAFONE_PATH,
+    MAPPING_COMUNI_APT_PATH,
+)
 from aixpa_analisi_indici.help_plots import plot_stats
 
 # %% [markdown]
@@ -33,12 +40,12 @@ from aixpa_analisi_indici.help_plots import plot_stats
 
 # In[ ]:
 
-vodafone_attendences = pd.read_csv(get_s3("vodafone_attendences.csv"))
-vodafone_attendences_new = pd.read_csv(get_s3("vodafone_attendences_new.csv"))
+vodafone_attendences = pd.read_csv(VODAFONE_ATTENDENCIES_PATH)
+vodafone_attendences_new = pd.read_csv(VODAFONE_ATTENDENCIES_NEW_PATH)
 
-geojson_comuni_json_data = geopd.read_file(get_s3("TRENTINO-comuni_Vodafone_2023.geojson"))
-json_vodafone = get_mapping("mapping_comuni_into_vodafone_Trento.json")
-json_apt = get_mapping("map_comuni_into_apt.json")
+geojson_comuni_json_data = geopd.read_file(GEOJSON_COMUNI_VODAFONE_PATH)
+json_vodafone = json.loads(MAPPING_COMUNI_VODAFONE_PATH.read_text(encoding="utf-8"))
+json_apt = json.loads(MAPPING_COMUNI_APT_PATH.read_text(encoding="utf-8"))
 
 # In[ ]:
 location_map = dict(
