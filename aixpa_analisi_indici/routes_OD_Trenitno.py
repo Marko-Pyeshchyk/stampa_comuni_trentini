@@ -2,7 +2,7 @@ import hashlib
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import geopandas as gpd
 import numpy as np
@@ -12,7 +12,7 @@ import requests
 # =============================================================================
 # 1. CONFIGURAZIONE
 # =============================================================================
-BASE_DIR = Path(__file__).resolve().parent 
+BASE_DIR = Path(__file__).resolve().parent if "__file__" in globals() else Path.cwd()
 
 CONFIG = {
     "shapefile_path": BASE_DIR /"Com01012026_g/Com01012026_g_WGS84.shp",
@@ -68,7 +68,10 @@ def init_session(user_agent: str) -> requests.Session:
 def cache_path(chiave: str) -> Path:
     p = CONFIG[chiave]
     pe = CONFIG["province_extra"]
-    sfx = "italia" if pe is None else "_".join(sorted(pe))
+    if pe is None:
+        italia = p.with_name(f"{p.stem}_italia{p.suffix}")
+        return italia if italia.exists() else p
+    sfx = "_".join(sorted(pe))
     return p.with_name(f"{p.stem}_{sfx}{p.suffix}")
 
 def carica_comuni() -> gpd.GeoDataFrame:
@@ -248,7 +251,15 @@ def calcola_matrice_osrm(session, punti_df: pd.DataFrame):
 
     lavori = [("A", o, d) for o in chunks(idx_T) for d in chunks(idx_all)] + \
              [("B", o, d) for o in chunks(idx_X) for d in chunks(idx_T)]
-    logging.info(f"{len(lavori)} richieste OSRM (le già calcolate vengono lette dalla cache)")
+    cache_files = [
+        cache_dir / f"{rett}_{o[0]}_{d[0]}_{len(o)}_{len(d)}.npz"
+        for rett, o, d in lavori
+    ]
+    cache_hits = sum(f.exists() for f in cache_files)
+    logging.info(
+        f"Blocchi OSRM: {len(lavori)} totali, {cache_hits} in cache, "
+        f"{len(lavori) - cache_hits} da richiedere"
+    )
 
     durA, disA = np.full((nT, N), np.nan), np.full((nT, N), np.nan)
     durB, disB = np.full((N - nT, nT), np.nan), np.full((N - nT, nT), np.nan)
@@ -292,17 +303,20 @@ def get_o_calcola_matrice(session, punti_df: pd.DataFrame) -> pd.DataFrame:
 
     nomi = punti_df["COMUNE"].to_numpy()
     istat = punti_df["PRO_COM_T"].to_numpy()
+    tot_minuti = dur / 60
     matrice = pd.DataFrame({
         "istat_origine": istat[o],
         "comune_origine": nomi[o],
         "istat_destinazione": istat[d],
         "comune_destinazione": nomi[d],
-        "distanza": np.round(dis / 1000, 2),          # km
-        "tempo_di_percorrenza": np.round(dur / 60, 1),  # minuti
+        "distanza": np.round(dis / 1000, 2),                # km
+        "ore": (tot_minuti // 60).astype(int),              # ore intere
+        "minuti": np.round(tot_minuti % 60, 1),             # minuti rimanenti
+        "tempo_totale_minuti": np.round(tot_minuti, 1)      # (opzionale) comodo se ti serve il totale in minuti per i filtri
     })
 
     prima = len(matrice)
-    matrice = matrice.dropna(subset=["tempo_di_percorrenza"])  # es. isole non raggiungibili via strada
+    matrice = matrice.dropna(subset=["tempo_totale_minuti"])  # es. isole non raggiungibili via strada
     logging.info(f"Righe: {len(matrice)} (scartate {prima - len(matrice)} coppie senza percorso)")
 
     matrice.to_csv(cache_file, index=False)
@@ -335,7 +349,7 @@ def get_tempo_e_distanza(matrice: pd.DataFrame, punti_df: pd.DataFrame, origine:
     if r.empty:
         return f"Percorso da '{origine}' a '{destinazione}' non presente (nessuno dei due è in Trentino, o senza percorso)."
     riga = r.iloc[0]
-    return f"Da {riga['comune_origine']} a {riga['comune_destinazione']}: {riga['tempo_di_percorrenza']} min ({riga['distanza']} km)"
+    return f"Da {riga['comune_origine']} a {riga['comune_destinazione']}: {riga['tempo_totale_minuti']} min ({riga['distanza']} km)"
 
 
 # =============================================================================
@@ -351,7 +365,7 @@ def main():
         print(get_tempo_e_distanza(matrice, punti_df, o, d))
 
     print("\n--- Top 5 percorsi più lunghi ---")
-    print(matrice.nlargest(5, "tempo_di_percorrenza"))
+    print(matrice.nlargest(5, "tempo_totale_minuti"))
     return matrice, punti_df
 
 
